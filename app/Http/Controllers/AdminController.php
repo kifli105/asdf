@@ -14,6 +14,8 @@ use App\Models\KpiPrediksi;
 use App\Models\AuditLog;
 use App\Services\KpiService;
 use App\Services\PredictionService;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 use Carbon\Carbon;
 
 class AdminController extends Controller
@@ -1280,5 +1282,162 @@ class AdminController extends Controller
             return Carbon::parse($tanggal . ' ' . $trimmed);
         }
         return Carbon::parse($trimmed);
+    }
+
+    // =========================================================================
+    // RBAC — Manajemen Pengguna (FR-RBAC)
+    // =========================================================================
+
+    public function rbacIndex(Request $request)
+    {
+        $search     = $request->input('search');
+        $roleFilter = $request->input('role');
+
+        $query = User::query()->orderBy('name');
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('username', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        if ($roleFilter) {
+            $query->where('role', $roleFilter);
+        }
+
+        $users      = $query->paginate(15)->withQueryString();
+        $totalAdmin = User::where('role', 'admin')->count();
+        $totalGizi  = User::where('role', 'ahli_gizi')->count();
+        $totalUsers = User::count();
+
+        $auditLogs = AuditLog::with('user')
+            ->whereIn('action', ['buat_pengguna', 'ubah_pengguna', 'hapus_pengguna', 'reset_password_pengguna', 'ubah_role'])
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get();
+
+        return view('admin.rbac.index', compact(
+            'users', 'totalAdmin', 'totalGizi', 'totalUsers', 'auditLogs', 'search', 'roleFilter'
+        ));
+    }
+
+    public function rbacStore(Request $request)
+    {
+        $data = $request->validate([
+            'name'                  => 'required|string|max:100',
+            'username'              => 'required|string|max:50|unique:users,username',
+            'email'                 => 'required|email|unique:users,email',
+            'role'                  => 'required|in:admin,ahli_gizi',
+            'password'              => 'required|string|min:8|confirmed',
+        ], [
+            'username.unique'       => 'Username sudah digunakan.',
+            'email.unique'          => 'Email sudah terdaftar.',
+            'password.min'          => 'Password minimal 8 karakter.',
+            'password.confirmed'    => 'Konfirmasi password tidak cocok.',
+        ]);
+
+        $user = User::create([
+            'name'     => $data['name'],
+            'username' => $data['username'],
+            'email'    => $data['email'],
+            'role'     => $data['role'],
+            'password' => Hash::make($data['password']),
+        ]);
+
+        AuditLog::log(
+            action: 'buat_pengguna',
+            modelType: 'User',
+            modelId: (string) $user->id,
+            newValues: ['name' => $user->name, 'username' => $user->username, 'role' => $user->role]
+        );
+
+        return redirect()->route('admin.rbac.index')
+            ->with('success', "Pengguna \"{$user->name}\" berhasil ditambahkan sebagai {$this->labelRole($user->role)}.");
+    }
+
+    public function rbacUpdate(Request $request, User $user)
+    {
+        $data = $request->validate([
+            'name'     => 'required|string|max:100',
+            'username' => 'required|string|max:50|unique:users,username,' . $user->id,
+            'email'    => 'required|email|unique:users,email,' . $user->id,
+            'role'     => 'required|in:admin,ahli_gizi',
+        ], [
+            'username.unique' => 'Username sudah digunakan.',
+            'email.unique'    => 'Email sudah terdaftar.',
+        ]);
+
+        if ($user->id === auth()->id() && $data['role'] !== $user->role) {
+            return redirect()->route('admin.rbac.index')
+                ->with('error', 'Anda tidak dapat mengubah role akun Anda sendiri.');
+        }
+
+        $old = ['name' => $user->name, 'username' => $user->username, 'email' => $user->email, 'role' => $user->role];
+        $user->update($data);
+
+        AuditLog::log(
+            action: $old['role'] !== $user->role ? 'ubah_role' : 'ubah_pengguna',
+            modelType: 'User',
+            modelId: (string) $user->id,
+            oldValues: $old,
+            newValues: ['name' => $user->name, 'username' => $user->username, 'email' => $user->email, 'role' => $user->role]
+        );
+
+        return redirect()->route('admin.rbac.index')
+            ->with('success', "Data pengguna \"{$user->name}\" berhasil diperbarui.");
+    }
+
+    public function rbacDestroy(Request $request, User $user)
+    {
+        if ($user->id === auth()->id()) {
+            return redirect()->route('admin.rbac.index')
+                ->with('error', 'Anda tidak dapat menghapus akun yang sedang digunakan.');
+        }
+
+        $nama = $user->name;
+        AuditLog::log(
+            action: 'hapus_pengguna',
+            modelType: 'User',
+            modelId: (string) $user->id,
+            oldValues: ['name' => $user->name, 'username' => $user->username, 'role' => $user->role]
+        );
+
+        $user->delete();
+
+        return redirect()->route('admin.rbac.index')
+            ->with('success', "Pengguna \"{$nama}\" berhasil dihapus dari sistem.");
+    }
+
+    public function rbacResetPassword(Request $request, User $user)
+    {
+        $data = $request->validate([
+            'new_password' => 'required|string|min:8|confirmed',
+        ], [
+            'new_password.min'       => 'Password baru minimal 8 karakter.',
+            'new_password.confirmed' => 'Konfirmasi password tidak cocok.',
+        ]);
+
+        $user->update(['password' => Hash::make($data['new_password'])]);
+
+        AuditLog::log(
+            action: 'reset_password_pengguna',
+            modelType: 'User',
+            modelId: (string) $user->id,
+            newValues: ['username' => $user->username, 'reset_by' => auth()->user()->username]
+        );
+
+        return redirect()->route('admin.rbac.index')
+            ->with('success', "Password pengguna \"{$user->name}\" berhasil direset.");
+    }
+
+    private function labelRole(string $role): string
+    {
+        return match ($role) {
+            'admin'     => 'Admin SPPG',
+            'ahli_gizi' => 'Ahli Gizi',
+            default     => $role,
+        };
     }
 }

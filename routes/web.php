@@ -59,6 +59,13 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
     // Prediksi Risiko Random Forest (Pra-Distribusi per Batch)
     Route::get('/prediksi-risiko', [AdminController::class, 'prediksiRisiko'])->name('prediksi.index');
     Route::post('/prediksi-risiko/hitung', [AdminController::class, 'hitungUlangPrediksi'])->name('prediksi.hitung');
+
+    // Manajemen Pengguna & RBAC (FR-RBAC)
+    Route::get('/manajemen-pengguna', [AdminController::class, 'rbacIndex'])->name('rbac.index');
+    Route::post('/manajemen-pengguna', [AdminController::class, 'rbacStore'])->name('rbac.store');
+    Route::post('/manajemen-pengguna/{user}/update', [AdminController::class, 'rbacUpdate'])->name('rbac.update');
+    Route::delete('/manajemen-pengguna/{user}', [AdminController::class, 'rbacDestroy'])->name('rbac.destroy');
+    Route::post('/manajemen-pengguna/{user}/reset-password', [AdminController::class, 'rbacResetPassword'])->name('rbac.reset_password');
 });
 
 // 4. Modul Khusus Ahli Gizi (Role: ahli_gizi)

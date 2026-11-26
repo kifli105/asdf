@@ -125,6 +125,9 @@
                         <a href="{{ route('admin.kpi.index') }}" class="nav-item {{ request()->routeIs('admin.kpi.*') ? 'active' : '' }}">
                             KPI Mingguan
                         </a>
+                        <a href="{{ route('admin.rbac.index') }}" class="nav-item {{ request()->routeIs('admin.rbac.*') ? 'active' : '' }}">
+                            Manajemen Pengguna
+                        </a>
                     @else
                         <a href="{{ route('gizi.dashboard') }}" class="nav-item {{ request()->routeIs('gizi.dashboard') ? 'active' : '' }}">
                             Dashboard / Data Gizi
